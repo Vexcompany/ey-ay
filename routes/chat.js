@@ -24,7 +24,7 @@ router.post('/gemini', async (req, res) => {
     }
 
     const persona = getPersona(personaKey);
-    const reply   = await callGemini(message, persona.systemPrompt);
+    const reply   = await callGemini(message, persona.systemPrompt, personaKey);
 
     await db.incrementUsage(userId);
     await db.saveMessage(userId, { role: 'user',      text: message });
