@@ -11,38 +11,45 @@ function getLimitForTipe(tipe) {
   return DAILY_LIMITS[tipe] ?? DAILY_LIMITS.gratis;
 }
 
-// ── USERS ─────────────────────────────────────────────────────
+// ── MEMBERS (validasi login) ───────────────────────────────────
+
+async function findMember(nama, jabatan, generasi) {
+  const { data, error } = await supabase
+    .from('members')
+    .select('*')
+    .ilike('nama', nama.trim())
+    .ilike('jabatan', jabatan.trim())
+    .eq('generasi', parseInt(generasi))
+    .maybeSingle();
+
+  if (error) throw error;
+  return data; // null jika tidak ditemukan
+}
+
+// ── USERS (rate limit) ─────────────────────────────────────────
 
 async function getOrCreateUser(userId, tipe = 'gratis') {
   const daily = getLimitForTipe(tipe);
 
-  // Upsert: insert if not exists, update tipe+daily if tipe changed
-  const { data, error } = await supabase
+  // Insert jika belum ada, abaikan conflict
+  await supabase
     .from('users')
-    .upsert(
-      { id: userId, tipe, daily, used: 0, last_reset: new Date().toISOString() },
-      { onConflict: 'id', ignoreDuplicates: true }
-    )
-    .select()
-    .single();
+    .insert({ id: userId, tipe, daily, used: 0, last_reset: new Date().toISOString() })
+    .maybeSingle();
 
-  if (error && error.code !== '23505') throw error;
-
-  // Fetch current state
-  const { data: user, error: fetchErr } = await supabase
+  // Fetch state terkini
+  const { data: user, error } = await supabase
     .from('users')
     .select('*')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
-  if (fetchErr) throw fetchErr;
+  if (error) throw error;
+  if (!user) throw new Error(`User ${userId} tidak ditemukan.`);
 
-  // Sync daily limit if tipe changed
+  // Sync tipe jika berubah
   if (user.tipe !== tipe) {
-    await supabase
-      .from('users')
-      .update({ tipe, daily })
-      .eq('id', userId);
+    await supabase.from('users').update({ tipe, daily }).eq('id', userId);
     user.tipe  = tipe;
     user.daily = daily;
   }
@@ -50,7 +57,7 @@ async function getOrCreateUser(userId, tipe = 'gratis') {
   return user;
 }
 
-function resetLimitIfNeeded(user) {
+async function applyResetIfNeeded(user) {
   const lastReset = new Date(user.last_reset);
   const now       = new Date();
   const isSameDay =
@@ -58,18 +65,13 @@ function resetLimitIfNeeded(user) {
     lastReset.getMonth()    === now.getMonth()    &&
     lastReset.getDate()     === now.getDate();
 
-  return !isSameDay; // caller handles the reset
-}
-
-async function applyResetIfNeeded(user) {
-  if (resetLimitIfNeeded(user)) {
-    const { error } = await supabase
+  if (!isSameDay) {
+    await supabase
       .from('users')
-      .update({ used: 0, last_reset: new Date().toISOString() })
+      .update({ used: 0, last_reset: now.toISOString() })
       .eq('id', user.id);
-    if (error) throw error;
     user.used       = 0;
-    user.last_reset = new Date().toISOString();
+    user.last_reset = now.toISOString();
   }
   return user;
 }
@@ -83,7 +85,7 @@ async function incrementUsage(userId) {
   if (error) throw error;
 }
 
-// ── CHATS ─────────────────────────────────────────────────────
+// ── CHATS ──────────────────────────────────────────────────────
 
 async function saveMessage(userId, { role, text, persona }) {
   const { error } = await supabase
@@ -95,7 +97,7 @@ async function saveMessage(userId, { role, text, persona }) {
 async function getHistory(userId) {
   const { data, error } = await supabase
     .from('chats')
-    .select('*')
+    .select('role, text, persona, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -103,15 +105,14 @@ async function getHistory(userId) {
 }
 
 async function clearHistory(userId) {
-  const { error } = await supabase
-    .from('chats')
-    .delete()
-    .eq('user_id', userId);
+  const { error } = await supabase.from('chats').delete().eq('user_id', userId);
   if (error) throw error;
 }
 
 module.exports = {
+  supabase,
   DAILY_LIMITS,
+  findMember,
   getOrCreateUser,
   applyResetIfNeeded,
   canUseAI,
