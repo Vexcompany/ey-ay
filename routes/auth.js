@@ -4,6 +4,7 @@ const jwt     = require('jsonwebtoken');
 const db      = require('../db');
 
 const JWT_SECRET = process.env.JWT_SECRET;
+console.log('JWT_SECRET loaded:', !!JWT_SECRET);
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
