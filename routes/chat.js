@@ -1,23 +1,31 @@
-const express       = require('express');
-const router        = express.Router();
-const db            = require('../db');
+const express          = require('express');
+const router           = express.Router();
+const db               = require('../db');
 const { getPersona }   = require('../personas');
 const { callGemini }   = require('../services/gemini');
 const { requireAuth }  = require('../middleware/auth');
 
-// Semua route chat wajib login
 router.use(requireAuth);
 
 // POST /api/chat/gemini
 router.post('/gemini', async (req, res) => {
   const { message, persona: personaKey } = req.body;
-  const { userId, tipe } = req.user; // dari JWT, tidak bisa dimanipulasi
+  const { userId, tipe } = req.user;
 
   if (!message) return res.status(400).json({ error: 'message is required' });
 
   try {
     const user = await db.getOrCreateUser(String(userId), tipe);
     await db.applyResetIfNeeded(user);
+
+    // Cek status suspend / ban
+    const status = db.checkUserStatus(user);
+    if (status.blocked) {
+      return res.status(403).json({
+        error: status.reason,
+        type: status.type
+      });
+    }
 
     if (!db.canUseAI(user)) {
       return res.status(429).json({
