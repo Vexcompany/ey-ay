@@ -23,7 +23,7 @@ async function findMember(nama, jabatan, generasi) {
     .maybeSingle();
 
   if (error) throw error;
-  return data; // null jika tidak ditemukan
+  return data;
 }
 
 // ── USERS (rate limit) ─────────────────────────────────────────
@@ -31,13 +31,15 @@ async function findMember(nama, jabatan, generasi) {
 async function getOrCreateUser(userId, tipe = 'gratis') {
   const daily = getLimitForTipe(tipe);
 
-  // Insert jika belum ada, abaikan conflict
   await supabase
     .from('users')
-    .insert({ id: userId, tipe, daily, used: 0, last_reset: new Date().toISOString() })
+    .insert({
+      id: userId, tipe, daily, used: 0,
+      last_reset: new Date().toISOString(),
+      suspended: false, banned: false
+    })
     .maybeSingle();
 
-  // Fetch state terkini
   const { data: user, error } = await supabase
     .from('users')
     .select('*')
@@ -80,6 +82,28 @@ function canUseAI(user) {
   return user.used < user.daily;
 }
 
+/**
+ * Cek apakah user disuspend atau dibanned.
+ * Return: { blocked: true, reason, type } atau { blocked: false }
+ */
+function checkUserStatus(user) {
+  if (user.banned) {
+    return {
+      blocked: true,
+      type: 'banned',
+      reason: user.suspend_reason ?? 'Akun kamu telah dibanned secara permanen. Hubungi admin Pagaska.'
+    };
+  }
+  if (user.suspended) {
+    return {
+      blocked: true,
+      type: 'suspended',
+      reason: user.suspend_reason ?? 'Akun kamu sedang disuspend. Hubungi admin Pagaska.'
+    };
+  }
+  return { blocked: false };
+}
+
 async function incrementUsage(userId) {
   const { error } = await supabase.rpc('increment_usage', { uid: userId });
   if (error) throw error;
@@ -109,6 +133,18 @@ async function clearHistory(userId) {
   if (error) throw error;
 }
 
+// ── ANNOUNCEMENTS ──────────────────────────────────────────────
+
+async function getActiveAnnouncements() {
+  const { data, error } = await supabase
+    .from('announcements')
+    .select('id, title, content, type, created_at')
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (error) throw error;
+  return data ?? [];
+}
+
 module.exports = {
   supabase,
   DAILY_LIMITS,
@@ -116,8 +152,10 @@ module.exports = {
   getOrCreateUser,
   applyResetIfNeeded,
   canUseAI,
+  checkUserStatus,
   incrementUsage,
   saveMessage,
   getHistory,
-  clearHistory
+  clearHistory,
+  getActiveAnnouncements
 };
