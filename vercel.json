@@ -4,6 +4,13 @@
     { "src": "api/index.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "api/index.js" }
+    { "src": "/api/(.*)", "dest": "api/index.js" },
+    { "src": "/beranda",  "dest": "/index.html"  },
+    { "src": "/chat",     "dest": "/index.html"  },
+    { "src": "/profil",   "dest": "/index.html"  },
+    { "src": "/riwayat",  "dest": "/index.html"  },
+    { "src": "/leaderboard", "dest": "/index.html" },
+    { "src": "/admin",    "dest": "/admin.html"  },
+    { "src": "/",         "dest": "/index.html"  }
   ]
 }
