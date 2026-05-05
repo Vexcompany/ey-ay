@@ -21,10 +21,7 @@ router.post('/gemini', async (req, res) => {
     // Cek status suspend / ban
     const status = db.checkUserStatus(user);
     if (status.blocked) {
-      return res.status(403).json({
-        error: status.reason,
-        type: status.type
-      });
+      return res.status(403).json({ error: status.reason, type: status.type });
     }
 
     if (!db.canUseAI(user)) {
@@ -35,8 +32,20 @@ router.post('/gemini', async (req, res) => {
       });
     }
 
+    // Ambil riwayat chat untuk konteks percakapan (maks 20 pesan terakhir)
+    const rawHistory = await db.getHistory(String(userId));
+    const recentHistory = rawHistory.slice(-20); // ambil 20 terakhir
+
+    // Format ke struktur messages untuk GPT
+    const historyMessages = recentHistory.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.text
+    }));
+
     const persona = getPersona(personaKey);
-    const reply   = await callGemini(message, persona.systemPrompt, personaKey);
+
+    // Kirim ke GPT dengan history sebagai konteks
+    const reply = await callGemini(message, persona.systemPrompt, personaKey, historyMessages);
 
     await db.incrementUsage(String(userId));
     await db.saveMessage(String(userId), { role: 'user',      text: message });
