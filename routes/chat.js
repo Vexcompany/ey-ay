@@ -2,6 +2,7 @@ const express          = require('express');
 const router           = express.Router();
 const db               = require('../db');
 const { getPersona }   = require('../personas');
+const { callRynekoo } = require('../services/rynekoo');
 const { callGemini }   = require('../services/gemini');
 const { requireAuth }  = require('../middleware/auth');
 
@@ -62,6 +63,33 @@ router.post('/gemini', async (req, res) => {
     const status = err.response?.status || 500;
     const errMsg = err.response?.data?.error?.message || 'Server error';
     res.status(status).json({ error: errMsg });
+  }
+});
+
+router.post('/multi-ai', async (req, res) => {
+  try {
+    const { message, model } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        error: 'message required'
+      });
+    }
+
+    const reply = await callRynekoo(message, model);
+
+    res.json({
+      success: true,
+      model,
+      reply
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      error: 'AI request failed'
+    });
   }
 });
 
