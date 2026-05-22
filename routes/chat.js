@@ -4,6 +4,7 @@ const db               = require('../db');
 const { getPersona }   = require('../personas');
 const { callRynekoo } = require('../services/rynekoo');
 const { callGemini }   = require('../services/gemini');
+const { callVynaa } = require('../services/vynaa');
 const { requireAuth }  = require('../middleware/auth');
 
 router.use(requireAuth);
