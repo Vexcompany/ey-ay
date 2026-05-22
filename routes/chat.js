@@ -94,6 +94,32 @@ router.post('/multi-ai', async (req, res) => {
   }
 });
 
+router.post('/vynaa', async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({
+        error: 'message required'
+      });
+    }
+
+    const reply = await callVynaa(message);
+
+    res.json({
+      success: true,
+      reply
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      error: 'AI request failed'
+    });
+  }
+});
+
 // GET /api/chat/history
 router.get('/history', async (req, res) => {
   try {
