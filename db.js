@@ -20,10 +20,10 @@ async function findMember(nama, jabatan, generasi) {
     .ilike('nama', nama.trim())
     .ilike('jabatan', jabatan.trim())
     .eq('generasi', parseInt(generasi))
-    .maybeSingle();
+    .limit(1);
 
   if (error) throw error;
-  return data;
+  return data?.[0] ?? null;
 }
 
 // ── USERS (rate limit) ─────────────────────────────────────────
