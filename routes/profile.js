@@ -8,23 +8,25 @@ router.use(requireAuth);
 // ── GET /api/profile ─────────────────────────────────────────
 // Ambil profil lengkap user yang sedang login
 router.get('/', async (req, res) => {
-  const { userId } = req.user;
+  const { userId, nama, jabatan, generasi, tipe } = req.user;
 
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select(`
-        id, tipe, used, daily, last_reset, created_at,
-        avatar_url, bio,
-        members (nama, jabatan, generasi)
-      `)
+      .select('id, tipe, used, daily, last_reset, created_at, avatar_url, bio')
       .eq('id', String(userId))
       .maybeSingle();
 
     if (error) throw error;
     if (!user) return res.status(404).json({ error: 'Profil tidak ditemukan.' });
 
-    res.json({ profile: user });
+    // Gabungkan info member dari JWT (tidak perlu join FK)
+    res.json({
+      profile: {
+        ...user,
+        members: { nama, jabatan, generasi }
+      }
+    });
   } catch (err) {
     console.error('Profile get error:', err);
     res.status(500).json({ error: 'Gagal mengambil profil.' });
@@ -153,19 +155,26 @@ router.delete('/avatar', async (req, res) => {
 // Top 10 pengguna berdasarkan total usage (publik, hanya nama + usage)
 router.get('/leaderboard', async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data: users, error } = await supabase
       .from('users')
-      .select(`
-        id, used, daily, tipe, avatar_url,
-        members (nama, jabatan, generasi)
-      `)
+      .select('id, used, daily, tipe, avatar_url')
       .eq('banned', false)
       .order('used', { ascending: false })
       .limit(10);
 
     if (error) throw error;
 
-    res.json({ leaderboard: data ?? [] });
+    // Ambil info member untuk setiap user
+    const result = await Promise.all((users ?? []).map(async (u) => {
+      const { data: member } = await supabase
+        .from('members')
+        .select('nama, jabatan, generasi')
+        .eq('id', u.id)
+        .maybeSingle();
+      return { ...u, members: member ?? null };
+    }));
+
+    res.json({ leaderboard: result });
   } catch (err) {
     res.status(500).json({ error: 'Gagal mengambil leaderboard.' });
   }
