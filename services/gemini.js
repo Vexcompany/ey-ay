@@ -17,6 +17,32 @@ function getDateTime() {
   return { jam, tgl };
 }
 
+// Instruksi Pagaska Music — disisipkan ke setiap persona
+const MUSIC_INSTRUCTION = `
+PAGASKA MUSIC — FITUR KHUSUS:
+Pagaska punya platform musik bernama "Pagaska Music". Kamu bisa merekomendasikan lagu berdasarkan suasana hati (mood) user dengan menyelipkan tag khusus:
+
+Format tag: [SEND_SONG:mood=NAMA_MOOD]
+
+Mood yang tersedia:
+- healing    → untuk menenangkan, dukungan emosional, lagi sedih/stres
+- semangat   → untuk motivasi, sebelum latihan, butuh dorongan
+- santai     → untuk bersantai, ngobrol ringan, mood biasa
+- romantis   → untuk cerita cinta, galau, rindu
+- fokus      → untuk belajar, ngerjain tugas, butuh konsentrasi
+
+Aturan penggunaan:
+1. Sisipkan tag HANYA ketika konteks percakapan memang relevan dengan musik/mood
+2. Jangan dipaksakan — gunakan secara natural
+3. Letakkan tag di akhir respons, setelah teks biasa
+4. Boleh kombinasikan dengan kalimat seperti "Eh, mau aku kirimin lagu yang cocok?"
+5. JANGAN tulis tag jika user sedang tanya hal teknis/pelajaran/koding
+
+Contoh penggunaan yang benar:
+"Wah, lagi stres ya? Aku dengerin kamu kok. Coba tarik napas dulu. [SEND_SONG:mood=healing]"
+"Semangat latihan hari ini! Biar makin berapi-api nih. [SEND_SONG:mood=semangat]"
+`;
+
 function buildSystemPrompt(persona) {
   const { jam, tgl } = getDateTime();
 
@@ -41,7 +67,9 @@ ATURAN KETAT:
 4. Fokus pada validasi perasaan dan dukungan emosional
 5. Jawab dalam Bahasa Indonesia yang hangat dan lembut
 6. Kamu BUKAN dokter sungguhan — kamu Dokter Taksaka, AI support emosional Pagaska
-7. Waktu sekarang: ${tgl}, pukul ${jam} WIB`;
+7. Waktu sekarang: ${tgl}, pukul ${jam} WIB
+
+${MUSIC_INSTRUCTION}`;
   }
 
   return `Kamu adalah Kak Taksaka, asisten AI santai dan friendly milik ${PAGASKA_DATA.namaLengkap}.
@@ -63,25 +91,14 @@ ATURAN:
 2. Kalau ada yang tanya soal Pagaska, jawab dengan bangga
 3. Kalau data organisasi tidak kamu ketahui, bilang "belum ada info soal itu, coba tanya pengurus langsung ya!"
 4. Kamu BUKAN ChatGPT, Claude, atau AI lain — kamu Kak Taksaka, AI-nya Pagaska
-5. Waktu sekarang: ${tgl}, pukul ${jam} WIB`;
+5. Waktu sekarang: ${tgl}, pukul ${jam} WIB
+
+${MUSIC_INSTRUCTION}`;
 }
 
-/**
- * Kirim pesan ke GPT via chateverywhere.app
- * dengan dukungan riwayat percakapan (multi-turn context)
- *
- * @param {string} message         - Pesan terbaru dari user
- * @param {string} _systemPrompt   - Tidak dipakai (dibangun ulang di sini)
- * @param {string} personaKey      - 'taksaka' | 'dokter'
- * @param {Array}  historyMessages - Array { role, content } dari riwayat sebelumnya
- */
 async function callGemini(message, _systemPrompt, personaKey = 'taksaka', historyMessages = []) {
   const systemPrompt = buildSystemPrompt(personaKey);
 
-  // Gabungkan: system prompt + history + pesan baru
-  // Format yang diterima chateverywhere.app:
-  // System prompt dimasukkan ke field "prompt" terpisah,
-  // sedangkan messages berisi history + pesan user terbaru
   const messages = [
     ...historyMessages,
     { role: 'user', content: message }
@@ -99,7 +116,7 @@ async function callGemini(message, _systemPrompt, personaKey = 'taksaka', histor
         deploymentName: 'gpt-4'
       },
       messages,
-      prompt: systemPrompt,   // system prompt via field "prompt"
+      prompt: systemPrompt,
       temperature: 0.7
     },
     {
@@ -112,7 +129,6 @@ async function callGemini(message, _systemPrompt, personaKey = 'taksaka', histor
     }
   );
 
-  // Response bisa string langsung atau object
   if (typeof data === 'string' && data.trim()) return data.trim();
   if (data?.choices?.[0]?.message?.content) return data.choices[0].message.content.trim();
   if (data?.content) return String(data.content).trim();
