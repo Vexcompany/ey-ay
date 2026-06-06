@@ -2,9 +2,8 @@ const express          = require('express');
 const router           = express.Router();
 const db               = require('../db');
 const { getPersona }   = require('../personas');
-const { callRynekoo } = require('../services/rynekoo');
 const { callGemini }   = require('../services/gemini');
-const { callVynaa } = require('../services/vynaa');
+const { callVynaa }    = require('../services/vynaa');
 const { requireAuth }  = require('../middleware/auth');
 
 router.use(requireAuth);
@@ -20,7 +19,6 @@ router.post('/gemini', async (req, res) => {
     const user = await db.getOrCreateUser(String(userId), tipe);
     await db.applyResetIfNeeded(user);
 
-    // Cek status suspend / ban
     const status = db.checkUserStatus(user);
     if (status.blocked) {
       return res.status(403).json({ error: status.reason, type: status.type });
@@ -34,19 +32,15 @@ router.post('/gemini', async (req, res) => {
       });
     }
 
-    // Ambil riwayat chat untuk konteks percakapan (maks 20 pesan terakhir)
+    // Ambil riwayat chat untuk konteks (maks 20 pesan terakhir)
     const rawHistory = await db.getHistory(String(userId));
-    const recentHistory = rawHistory.slice(-20); // ambil 20 terakhir
-
-    // Format ke struktur messages untuk GPT
+    const recentHistory = rawHistory.slice(-20);
     const historyMessages = recentHistory.map(m => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: m.text
     }));
 
     const persona = getPersona(personaKey);
-
-    // Kirim ke GPT dengan history sebagai konteks
     const reply = await callGemini(message, persona.systemPrompt, personaKey, historyMessages);
 
     await db.incrementUsage(String(userId));
@@ -67,56 +61,18 @@ router.post('/gemini', async (req, res) => {
   }
 });
 
-router.post('/multi-ai', async (req, res) => {
-  try {
-    const { message, model } = req.body;
-
-    if (!message) {
-      return res.status(400).json({
-        error: 'message required'
-      });
-    }
-
-    const reply = await callRynekoo(message, model);
-
-    res.json({
-      success: true,
-      model,
-      reply
-    });
-
-  } catch (err) {
-    console.error(err);
-
-    res.status(500).json({
-      error: 'AI request failed'
-    });
-  }
-});
-
+// POST /api/chat/vynaa
 router.post('/vynaa', async (req, res) => {
   try {
     const { message } = req.body;
-
     if (!message) {
-      return res.status(400).json({
-        error: 'message required'
-      });
+      return res.status(400).json({ error: 'message required' });
     }
-
     const reply = await callVynaa(message);
-
-    res.json({
-      success: true,
-      reply
-    });
-
+    res.json({ success: true, reply });
   } catch (err) {
-    console.error(err);
-
-    res.status(500).json({
-      error: 'AI request failed'
-    });
+    console.error('Vynaa error:', err);
+    res.status(500).json({ error: 'AI request failed' });
   }
 });
 
@@ -126,6 +82,7 @@ router.get('/history', async (req, res) => {
     const history = await db.getHistory(String(req.user.userId));
     res.json({ history });
   } catch (err) {
+    console.error('History error:', err);
     res.status(500).json({ error: 'Gagal mengambil history.' });
   }
 });
@@ -136,6 +93,7 @@ router.delete('/history', async (req, res) => {
     await db.clearHistory(String(req.user.userId));
     res.json({ message: 'Chat history cleared.' });
   } catch (err) {
+    console.error('Clear history error:', err);
     res.status(500).json({ error: 'Gagal menghapus history.' });
   }
 });
