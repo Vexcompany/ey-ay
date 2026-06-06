@@ -29,6 +29,7 @@ async function findMember(nama, jabatan, generasi) {
 
 async function getOrCreateUser(userId, tipe = 'gratis') {
   const daily = getLimitForTipe(tipe);
+  // upsert dengan ignoreDuplicates — aman dipanggil berkali-kali
   await supabase
     .from('users')
     .insert({
@@ -36,7 +37,9 @@ async function getOrCreateUser(userId, tipe = 'gratis') {
       last_reset: new Date().toISOString(),
       suspended: false, banned: false
     })
-    .maybeSingle();
+    .select()
+    .limit(1);
+  // Abaikan error insert (kemungkinan duplicate key) — yang penting select di bawah berhasil
   const { data: user, error } = await supabase
     .from('users')
     .select('*')
@@ -86,6 +89,7 @@ async function incrementUsage(userId) {
 // ── CHATS ──────────────────────────────────────────────────────
 
 async function saveMessage(userId, { role, text, persona, session_id, songs }) {
+  // Coba dengan semua kolom baru dulu
   const payload = {
     user_id:    userId,
     role,
@@ -93,45 +97,59 @@ async function saveMessage(userId, { role, text, persona, session_id, songs }) {
     persona:    persona    ?? null,
     session_id: session_id ?? null,
   };
-  // songs disimpan sebagai JSON jika kolom ada (graceful — jika kolom belum ada, skip)
   if (songs) {
-    try {
-      payload.songs = JSON.stringify(songs);
-    } catch {}
+    try { payload.songs = songs; } catch {}
   }
+
   const { error } = await supabase.from('chats').insert(payload);
-  if (error) {
-    // Jika error karena kolom session_id/songs belum ada, coba tanpa kolom baru
-    if (error.code === '42703' || error.message?.includes('column')) {
-      const { error: e2 } = await supabase.from('chats').insert({ user_id: userId, role, text, persona: persona ?? null });
-      if (e2) throw e2;
-    } else {
-      throw error;
-    }
+  if (!error) return; // sukses
+
+  // Jika gagal karena kolom belum ada (42703 = undefined_column)
+  const isColMissing = error.code === '42703'
+    || error.message?.toLowerCase().includes('column')
+    || error.message?.toLowerCase().includes('does not exist');
+
+  if (isColMissing) {
+    // Fallback: insert tanpa kolom baru
+    const { error: e2 } = await supabase
+      .from('chats')
+      .insert({ user_id: userId, role, text, persona: persona ?? null });
+    if (e2) throw e2;
+    return;
   }
+
+  throw error;
 }
 
 async function getHistory(userId) {
+  // Coba dengan kolom baru (session_id, songs) dulu
   const { data, error } = await supabase
     .from('chats')
     .select('role, text, persona, session_id, songs, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
-  if (error) {
-    // Fallback: select tanpa kolom baru
-    const { data: d2, error: e2 } = await supabase
-      .from('chats')
-      .select('role, text, persona, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true });
-    if (e2) throw e2;
-    return d2 ?? [];
+
+  if (!error) {
+    return (data ?? []).map(m => ({
+      ...m,
+      songs: m.songs
+        ? (typeof m.songs === 'string'
+            ? (() => { try { return JSON.parse(m.songs); } catch { return null; } })()
+            : m.songs)
+        : null
+    }));
   }
-  // Parse songs JSON jika ada
-  return (data ?? []).map(m => ({
-    ...m,
-    songs: m.songs ? (typeof m.songs === 'string' ? JSON.parse(m.songs) : m.songs) : null
-  }));
+
+  // Fallback: kolom belum ada di DB — select kolom dasar saja
+  const { data: d2, error: e2 } = await supabase
+    .from('chats')
+    .select('role, text, persona, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (e2) throw e2;
+  // session_id = undefined (bukan null) agar grouping tahu kolom tidak ada
+  return (d2 ?? []).map(m => ({ ...m, session_id: undefined, songs: null }));
 }
 
 async function clearHistory(userId) {
