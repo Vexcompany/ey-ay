@@ -13,16 +13,22 @@ router.get('/users', async (req, res) => {
     // Ambil semua users dengan join ke members
     const { data: users, error } = await supabase
       .from('users')
-      .select(`
-        id, tipe, used, daily, last_reset, suspended, banned,
-        suspend_reason, created_at,
-        members (nama, jabatan, generasi)
-      `)
+      .select('id, tipe, used, daily, last_reset, suspended, banned, suspend_reason, created_at')
       .order('used', { ascending: false });
 
     if (error) throw error;
 
-    res.json({ users: users ?? [] });
+    // Ambil info member terpisah untuk setiap user
+    const enriched = await Promise.all((users ?? []).map(async u => {
+      const { data: member } = await supabase
+        .from('members')
+        .select('nama, jabatan, generasi')
+        .eq('id', u.id)
+        .maybeSingle();
+      return { ...u, members: member ?? { nama: u.id, jabatan: '—', generasi: '?' } };
+    }));
+
+    res.json({ users: enriched });
   } catch (err) {
     console.error('Admin users error:', err);
     res.status(500).json({ error: 'Gagal mengambil data users.' });
@@ -36,18 +42,20 @@ router.get('/users/:userId', async (req, res) => {
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select(`
-        id, tipe, used, daily, last_reset, suspended, banned,
-        suspend_reason, created_at,
-        members (nama, jabatan, generasi)
-      `)
+      .select('id, tipe, used, daily, last_reset, suspended, banned, suspend_reason, created_at')
       .eq('id', userId)
       .maybeSingle();
 
     if (error) throw error;
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
 
-    res.json({ user });
+    const { data: member } = await supabase
+      .from('members')
+      .select('nama, jabatan, generasi')
+      .eq('id', userId)
+      .maybeSingle();
+
+    res.json({ user: { ...user, members: member ?? null } });
   } catch (err) {
     res.status(500).json({ error: 'Gagal mengambil data user.' });
   }
@@ -89,18 +97,27 @@ router.get('/chats', async (req, res) => {
   try {
     const { data: chats, error } = await supabase
       .from('chats')
-      .select(`
-        id, user_id, role, text, persona, created_at,
-        users (
-          members (nama, jabatan)
-        )
-      `)
+      .select('id, user_id, role, text, persona, created_at')
       .order('created_at', { ascending: false })
       .limit(limit);
 
     if (error) throw error;
 
-    res.json({ chats: chats ?? [] });
+    // Ambil nama member per user_id secara terpisah
+    const userIds = [...new Set((chats ?? []).map(c => c.user_id))];
+    const memberMap = {};
+    await Promise.all(userIds.map(async uid => {
+      const { data: m } = await supabase
+        .from('members').select('nama, jabatan').eq('id', uid).maybeSingle();
+      if (m) memberMap[uid] = m;
+    }));
+
+    const enriched = (chats ?? []).map(c => ({
+      ...c,
+      member: memberMap[c.user_id] ?? null
+    }));
+
+    res.json({ chats: enriched });
   } catch (err) {
     res.status(500).json({ error: 'Gagal mengambil chat terbaru.' });
   }
@@ -268,7 +285,7 @@ router.get('/stats', async (req, res) => {
         .gt('used', 0)
         .gte('last_reset', new Date().toISOString().split('T')[0]),
       supabase.from('users')
-        .select('id, used, daily, members(nama, jabatan)')
+        .select('id, used, daily')
         .order('used', { ascending: false })
         .limit(5)
     ]);

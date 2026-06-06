@@ -11,16 +11,44 @@ router.get('/', async (req, res) => {
   const { userId, nama, jabatan, generasi, tipe } = req.user;
 
   try {
-    const { data: user, error } = await supabase
+    // Coba select dengan kolom lengkap dulu
+    let user = null;
+    const { data: u1, error: e1 } = await supabase
       .from('users')
       .select('id, tipe, used, daily, last_reset, created_at, avatar_url, bio')
       .eq('id', String(userId))
       .maybeSingle();
 
-    if (error) throw error;
-    if (!user) return res.status(404).json({ error: 'Profil tidak ditemukan.' });
+    if (!e1) {
+      user = u1;
+    } else {
+      // Fallback: kolom avatar_url/bio mungkin belum ada
+      console.warn('Profile full select error, trying fallback:', e1.message);
+      const { data: u2, error: e2 } = await supabase
+        .from('users')
+        .select('id, tipe, used, daily, last_reset, created_at')
+        .eq('id', String(userId))
+        .maybeSingle();
+      if (e2) throw e2;
+      user = u2;
+    }
 
-    // Gabungkan info member dari JWT (tidak perlu join FK)
+    // Jika user belum ada di tabel users (baru pertama login), return data dari JWT
+    if (!user) {
+      return res.json({
+        profile: {
+          id: String(userId),
+          tipe: tipe || 'gratis',
+          used: 0,
+          daily: tipe === 'jabatan' ? 60 : 40,
+          last_reset: new Date().toISOString(),
+          avatar_url: null,
+          bio: null,
+          members: { nama, jabatan, generasi }
+        }
+      });
+    }
+
     res.json({
       profile: {
         ...user,
@@ -29,7 +57,7 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('Profile get error:', err);
-    res.status(500).json({ error: 'Gagal mengambil profil.' });
+    res.status(500).json({ error: 'Gagal mengambil profil: ' + err.message });
   }
 });
 
