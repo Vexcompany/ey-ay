@@ -54,12 +54,15 @@ router.post('/gemini', async (req, res) => {
     await db.saveMessage(String(userId), { role: 'user',      text: message, session_id: sid });
     await db.saveMessage(String(userId), { role: 'assistant', text: reply,   persona: persona.name, session_id: sid, songs: songs.length ? songs : null });
 
+    // Ambil nilai used terbaru dari DB untuk sinkronasi yang akurat
+    const updatedUser = await db.getOrCreateUser(String(userId), tipe);
+
     res.json({
       reply,
       persona: persona.name,
       songs: songs.length ? songs : undefined,
       moods: moods?.length ? moods : undefined,
-      usage: { used: user.used + 1, daily: user.daily, tipe }
+      usage: { used: updatedUser.used, daily: updatedUser.daily, tipe }
     });
 
   } catch (err) {
@@ -89,35 +92,50 @@ router.get('/history', async (req, res) => {
   try {
     const raw = await db.getHistory(String(req.user.userId));
 
-    // Kelompokkan per sesi: jika ada session_id pakai itu,
-    // jika tidak (data lama) kelompokkan berdasarkan gap waktu > 30 menit
-    const SESSION_GAP_MS = 30 * 60 * 1000; // 30 menit
+    if (!raw.length) {
+      return res.json({ sessions: [], total_messages: 0 });
+    }
+
+    // Deteksi apakah kolom session_id tersedia (pesan punya field session_id)
+    const hasSessionId = raw.some(m => m.session_id !== undefined);
+
     const sessions = [];
     let currentSession = null;
 
     for (const msg of raw) {
-      const msgTime = new Date(msg.created_at).getTime();
-      const sid = msg.session_id || null;
-
-      // Tentukan apakah pesan ini bagian dari sesi yang sama
+      const sid = hasSessionId ? (msg.session_id || null) : null;
       let sameSession = false;
+
       if (currentSession) {
-        if (sid && currentSession.session_id === sid) {
+        if (hasSessionId && sid && currentSession.session_id === sid) {
+          // Sama session_id → sesi yang sama
           sameSession = true;
-        } else if (!sid && !currentSession.session_id) {
-          const lastTime = new Date(currentSession.messages[currentSession.messages.length - 1].created_at).getTime();
-          if (msgTime - lastTime < SESSION_GAP_MS) {
-            sameSession = true;
-          }
+        } else if (hasSessionId && sid && currentSession.session_id !== sid) {
+          // Beda session_id → sesi baru
+          sameSession = false;
+        } else if (hasSessionId && !sid && !currentSession.session_id) {
+          // Keduanya tidak punya session_id → group by hari
+          const lastDate = new Date(currentSession.last_at).toDateString();
+          const curDate  = new Date(msg.created_at).toDateString();
+          sameSession = (lastDate === curDate);
+        } else if (!hasSessionId) {
+          // Kolom tidak ada sama sekali → group by hari
+          const lastDate = new Date(currentSession.last_at).toDateString();
+          const curDate  = new Date(msg.created_at).toDateString();
+          sameSession = (lastDate === curDate);
         }
       }
 
       if (sameSession) {
         currentSession.messages.push(msg);
         currentSession.last_at = msg.created_at;
+        // Update session_id jika sebelumnya null tapi sekarang ada
+        if (!currentSession.session_id && sid) {
+          currentSession.session_id = sid;
+        }
       } else {
         currentSession = {
-          session_id: sid || `auto_${sessions.length}`,
+          session_id: sid || `day_${new Date(msg.created_at).toISOString().slice(0,10)}_${sessions.length}`,
           started_at: msg.created_at,
           last_at:    msg.created_at,
           messages:   [msg]
@@ -126,23 +144,23 @@ router.get('/history', async (req, res) => {
       }
     }
 
-    // Tambahkan metadata ringkas per sesi
+    // Enrich metadata tiap sesi
     const enriched = sessions.map(s => {
       const firstUser = s.messages.find(m => m.role === 'user');
       const lastAI    = [...s.messages].reverse().find(m => m.role === 'assistant');
       const persona   = lastAI?.persona || 'Kak Taksaka';
       return {
-        session_id:  s.session_id,
-        started_at:  s.started_at,
-        last_at:     s.last_at,
-        title:       firstUser?.text?.slice(0, 80) || 'Sesi Chat',
+        session_id:    s.session_id,
+        started_at:    s.started_at,
+        last_at:       s.last_at,
+        title:         firstUser?.text?.slice(0, 80) || 'Sesi Chat',
         persona,
         message_count: s.messages.length,
-        messages:    s.messages
+        messages:      s.messages
       };
     });
 
-    // Urutkan terbaru dulu
+    // Terbaru dulu
     enriched.reverse();
 
     res.json({ sessions: enriched, total_messages: raw.length });
