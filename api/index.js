@@ -6,6 +6,7 @@ const authRoutes   = require('../routes/auth');
 const chatRoutes   = require('../routes/chat');
 const adminRoutes  = require('../routes/admin');
 const profileRoutes = require('../routes/profile');
+const storiesRoutes = require('../routes/stories');
 const { supabase } = require('../db');
 
 const app = express();
@@ -17,6 +18,7 @@ app.use('/api/auth',    authRoutes);
 app.use('/api/chat',    chatRoutes);
 app.use('/api/admin',   adminRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/stories', storiesRoutes);
 
 // ── GET /api/admin/announcements (public, pakai Bearer token biasa) ──
 // Duplikat endpoint agar frontend user bisa baca pengumuman tanpa admin password
