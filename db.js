@@ -14,13 +14,19 @@ function getLimitForTipe(tipe) {
 // ── MEMBERS ────────────────────────────────────────────────────
 
 async function findMember(nama, jabatan, generasi) {
+  // Bersihkan input: trim whitespace, normalize spasi ganda
+  const cleanNama    = nama.trim().replace(/\s+/g, ' ');
+  const cleanJabatan = jabatan.trim().replace(/\s+/g, ' ');
+  const cleanGen     = parseInt(generasi);
+
   const { data, error } = await supabase
     .from('members')
     .select('*')
-    .ilike('nama', nama.trim())
-    .ilike('jabatan', jabatan.trim())
-    .eq('generasi', parseInt(generasi))
+    .ilike('nama',    cleanNama)
+    .ilike('jabatan', cleanJabatan)
+    .eq('generasi',   cleanGen)
     .limit(1);
+
   if (error) throw error;
   return data?.[0] ?? null;
 }
@@ -169,6 +175,63 @@ async function getActiveAnnouncements() {
   return data ?? [];
 }
 
+
+// ── STORIES (RYXA) ─────────────────────────────────────────────
+
+async function saveStoriesMessage(userId, { role, text, session_id, audio_url }) {
+  const payload = { user_id: userId, role, text, session_id: session_id ?? null };
+  if (audio_url) payload.audio_url = audio_url;
+
+  const { error } = await supabase.from('stories_chats').insert(payload);
+  if (error) {
+    // Fallback tanpa audio_url jika kolom belum ada
+    if (error.code === '42703' || error.message?.toLowerCase().includes('column')) {
+      const { error: e2 } = await supabase
+        .from('stories_chats')
+        .insert({ user_id: userId, role, text, session_id: session_id ?? null });
+      if (e2) {
+        // Tabel belum ada — log saja, jangan crash
+        console.warn('stories_chats table not found, skipping save:', e2.message);
+      }
+    } else {
+      console.warn('saveStoriesMessage error (non-fatal):', error.message);
+    }
+  }
+}
+
+async function getStoriesHistory(userId) {
+  // Coba dengan audio_url dulu
+  const { data, error } = await supabase
+    .from('stories_chats')
+    .select('role, text, session_id, audio_url, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (!error) return data ?? [];
+
+  // Fallback tanpa audio_url
+  const { data: d2, error: e2 } = await supabase
+    .from('stories_chats')
+    .select('role, text, session_id, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (e2) {
+    // Tabel belum ada
+    console.warn('stories_chats not available:', e2.message);
+    return [];
+  }
+  return (d2 ?? []).map(m => ({ ...m, audio_url: null }));
+}
+
+async function clearStoriesHistory(userId) {
+  const { error } = await supabase
+    .from('stories_chats')
+    .delete()
+    .eq('user_id', userId);
+  if (error) console.warn('clearStoriesHistory error:', error.message);
+}
+
 module.exports = {
   supabase,
   DAILY_LIMITS,
@@ -181,5 +244,8 @@ module.exports = {
   saveMessage,
   getHistory,
   clearHistory,
-  getActiveAnnouncements
+  getActiveAnnouncements,
+  saveStoriesMessage,
+  getStoriesHistory,
+  clearStoriesHistory
 };
