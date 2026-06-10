@@ -35,24 +35,39 @@ async function findMember(nama, jabatan, generasi) {
 
 async function getOrCreateUser(userId, tipe = 'gratis') {
   const daily = getLimitForTipe(tipe);
-  // upsert dengan ignoreDuplicates — aman dipanggil berkali-kali
+
+  // Coba insert — abaikan error duplicate key
   await supabase
     .from('users')
-    .insert({
-      id: userId, tipe, daily, used: 0,
-      last_reset: new Date().toISOString(),
-      suspended: false, banned: false
-    })
+    .insert({ id: userId, tipe, daily, used: 0, last_reset: new Date().toISOString() })
     .select()
     .limit(1);
-  // Abaikan error insert (kemungkinan duplicate key) — yang penting select di bawah berhasil
-  const { data: user, error } = await supabase
+
+  // Select kolom inti yang pasti ada
+  const { data: userCore, error: coreErr } = await supabase
     .from('users')
-    .select('*')
+    .select('id, tipe, used, daily, last_reset')
     .eq('id', userId)
     .maybeSingle();
-  if (error) throw error;
-  if (!user) throw new Error(`User ${userId} tidak ditemukan.`);
+
+  if (coreErr) throw coreErr;
+  if (!userCore) throw new Error(`User ${userId} tidak ditemukan.`);
+
+  // Coba ambil kolom opsional (suspended, banned, suspend_reason)
+  // Kalau belum ada kolom ini, default ke false/null
+  let user = { ...userCore, suspended: false, banned: false, suspend_reason: null };
+  try {
+    const { data: extra } = await supabase
+      .from('users')
+      .select('suspended, banned, suspend_reason')
+      .eq('id', userId)
+      .maybeSingle();
+    if (extra) {
+      user.suspended     = extra.suspended     ?? false;
+      user.banned        = extra.banned        ?? false;
+      user.suspend_reason = extra.suspend_reason ?? null;
+    }
+  } catch { /* kolom belum ada — pakai default */ }
   if (user.tipe !== tipe) {
     await supabase.from('users').update({ tipe, daily }).eq('id', userId);
     user.tipe  = tipe;
