@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
     let user = null;
     const { data: u1, error: e1 } = await supabase
       .from('users')
-      .select('id, tipe, used, daily, last_reset, created_at, avatar_url, bio')
+      .select('id, tipe, used, daily, last_reset, avatar_url, bio')
       .eq('id', String(userId))
       .maybeSingle();
 
@@ -26,7 +26,7 @@ router.get('/', async (req, res) => {
       console.warn('Profile full select error, trying fallback:', e1.message);
       const { data: u2, error: e2 } = await supabase
         .from('users')
-        .select('id, tipe, used, daily, last_reset, created_at')
+        .select('id, tipe, used, daily, last_reset')
         .eq('id', String(userId))
         .maybeSingle();
       if (e2) throw e2;

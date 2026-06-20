@@ -4,6 +4,7 @@ const db               = require('../db');
 const { getPersona }   = require('../personas');
 const { callGemini }   = require('../services/gemini');
 const { callVynaa }    = require('../services/vynaa');
+const { callVelya }    = require('../services/velya');
 const { processSongTags } = require('../services/music');
 const { requireAuth }  = require('../middleware/auth');
 
@@ -70,6 +71,59 @@ router.post('/gemini', async (req, res) => {
     const status = err.response?.status || 500;
     const errMsg = err.response?.data?.error?.message || 'Server error';
     res.status(status).json({ error: errMsg });
+  }
+});
+
+// POST /api/chat/velya
+// Velya — pendamping psikologis (UnlimitedAI). Pakai limit & riwayat seperti chat biasa.
+router.post('/velya', async (req, res) => {
+  const { message, sessionId } = req.body;
+  const { userId, tipe } = req.user;
+
+  if (!message) return res.status(400).json({ error: 'message is required' });
+
+  try {
+    const user = await db.getOrCreateUser(String(userId), tipe);
+    await db.applyResetIfNeeded(user);
+
+    const status = db.checkUserStatus(user);
+    if (status.blocked) {
+      return res.status(403).json({ error: status.reason, type: status.type });
+    }
+
+    if (!db.canUseAI(user)) {
+      return res.status(429).json({
+        error: 'Limit harian habis. Coba lagi besok!',
+        used:  user.used,
+        daily: user.daily
+      });
+    }
+
+    const rawHistory = await db.getHistory(String(userId));
+    const historyMessages = rawHistory.slice(-20).map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.text
+    }));
+
+    const reply = await callVelya(message, historyMessages);
+
+    await db.incrementUsage(String(userId));
+
+    const sid = sessionId || null;
+    await db.saveMessage(String(userId), { role: 'user',      text: message, session_id: sid });
+    await db.saveMessage(String(userId), { role: 'assistant', text: reply,   persona: 'Velya', session_id: sid });
+
+    const updatedUser = await db.getOrCreateUser(String(userId), tipe);
+
+    res.json({
+      reply,
+      persona: 'Velya',
+      usage: { used: updatedUser.used, daily: updatedUser.daily, tipe }
+    });
+
+  } catch (err) {
+    console.error('Velya error:', err);
+    res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 
