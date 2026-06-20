@@ -1,7 +1,7 @@
 const express              = require('express');
 const router               = express.Router();
 const db                   = require('../db');
-const { generateStory, generateTTS, isStoryResponse } = require('../services/ryxa');
+const { generateStory, isStoryResponse } = require('../services/ryxa');
 const { requireAuth }      = require('../middleware/auth');
 
 router.use(requireAuth);
@@ -43,22 +43,15 @@ router.post('/chat', async (req, res) => {
     const reply = await generateStory(message, historyMessages);
     const isStory = isStoryResponse(reply);
 
-    // Kalau ini cerita → generate TTS
-    let audio = null;
-    if (isStory) {
-      try {
-        audio = await generateTTS(reply);
-      } catch (ttsErr) {
-        console.error('TTS error (non-fatal):', ttsErr.message);
-        // TTS gagal tidak block response — tetap kirim teks
-      }
-    }
+    // Audio narasi di-generate di sisi klien (TTS browser) agar andal untuk
+    // cerita panjang dan tidak bergantung pada layanan TTS pihak ketiga yang
+    // sering kena limit.
 
     // Increment usage & simpan ke history
     await db.incrementUsage(String(userId));
     const sid = sessionId || null;
     await db.saveStoriesMessage(String(userId), { role: 'user',      text: message,                session_id: sid });
-    await db.saveStoriesMessage(String(userId), { role: 'assistant', text: reply, session_id: sid, audio_url: audio?.url || null });
+    await db.saveStoriesMessage(String(userId), { role: 'assistant', text: reply, session_id: sid });
 
     // Ambil usage terbaru
     const updatedUser = await db.getOrCreateUser(String(userId), tipe);
@@ -66,7 +59,6 @@ router.post('/chat', async (req, res) => {
     res.json({
       reply,
       is_story: isStory,
-      audio:    audio || null,
       usage:    { used: updatedUser.used, daily: updatedUser.daily, tipe }
     });
 
