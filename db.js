@@ -36,12 +36,19 @@ async function findMember(nama, jabatan, generasi) {
 async function getOrCreateUser(userId, tipe = 'gratis') {
   const daily = getLimitForTipe(tipe);
 
-  // Coba insert — abaikan error duplicate key
-  await supabase
+  // Coba insert — abaikan error duplicate key (23505)
+  const { error: insertErr } = await supabase
     .from('users')
-    .insert({ id: userId, tipe, daily, used: 0, last_reset: new Date().toISOString() })
-    .select()
-    .limit(1);
+    .insert({ id: userId, tipe, daily, used: 0, last_reset: new Date().toISOString() });
+  
+  if (insertErr && insertErr.code !== '23505') {
+    // Bukan duplicate key error — cek apakah tabel belum ada
+    if (insertErr.code === '42P01') {
+      console.warn('users table does not exist!');
+      throw new Error('Tabel users belum ada di database.');
+    }
+    console.warn('getOrCreateUser insert warning:', insertErr.message);
+  }
 
   // Select kolom inti yang pasti ada
   const { data: userCore, error: coreErr } = await supabase
@@ -103,8 +110,36 @@ function checkUserStatus(user) {
 }
 
 async function incrementUsage(userId) {
-  const { error } = await supabase.rpc('increment_usage', { uid: userId });
-  if (error) throw error;
+  // Coba via RPC dulu
+  try {
+    const { error } = await supabase.rpc('increment_usage', { uid: userId });
+    if (!error) return;
+    // RPC tidak ditemukan — fallback ke direct update
+    if (error.code === '42883' || error.message?.toLowerCase().includes('function') || error.code === 'PGRST202') {
+      console.warn('RPC increment_usage not found, using direct update.');
+    } else {
+      throw error;
+    }
+  } catch (rpcErr) {
+    console.warn('RPC increment_usage failed, trying direct update:', rpcErr.message);
+  }
+
+  // Fallback: update used secara langsung
+  const { data: current, error: fetchErr } = await supabase
+    .from('users')
+    .select('used')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (fetchErr) throw fetchErr;
+
+  const newUsed = (current?.used ?? 0) + 1;
+  const { error: updateErr } = await supabase
+    .from('users')
+    .update({ used: newUsed })
+    .eq('id', userId);
+
+  if (updateErr) throw updateErr;
 }
 
 // ── CHATS ──────────────────────────────────────────────────────
@@ -194,57 +229,97 @@ async function getActiveAnnouncements() {
 // ── STORIES (RYXA) ─────────────────────────────────────────────
 
 async function saveStoriesMessage(userId, { role, text, session_id, audio_url }) {
-  const payload = { user_id: userId, role, text, session_id: session_id ?? null };
-  if (audio_url) payload.audio_url = audio_url;
+  const payload = {
+    user_id:    userId,
+    role,
+    text,
+    session_id: session_id || null,
+    audio_url:  audio_url  || null
+  };
 
-  const { error } = await supabase.from('stories_chats').insert(payload);
-  if (error) {
-    // Fallback tanpa audio_url jika kolom belum ada
+  try {
+    // Coba insert dengan semua kolom
+    const { error } = await supabase.from('stories_chats').insert(payload);
+    if (!error) return;
+
+    // Jika gagal karena kolom audio_url belum ada
     if (error.code === '42703' || error.message?.toLowerCase().includes('column')) {
+      const fallbackPayload = { user_id: userId, role, text, session_id: session_id || null };
       const { error: e2 } = await supabase
         .from('stories_chats')
-        .insert({ user_id: userId, role, text, session_id: session_id ?? null });
+        .insert(fallbackPayload);
       if (e2) {
-        // Tabel belum ada — log saja, jangan crash
-        console.warn('stories_chats table not found, skipping save:', e2.message);
+        // Coba tanpa session_id juga
+        const { error: e3 } = await supabase
+          .from('stories_chats')
+          .insert({ user_id: userId, role, text });
+        if (e3) {
+          console.warn('stories_chats insert failed (all fallbacks):', e3.message);
+        }
       }
-    } else {
-      console.warn('saveStoriesMessage error (non-fatal):', error.message);
+      return;
     }
+
+    // Jika tabel belum ada
+    if (error.code === '42P01' || error.message?.toLowerCase().includes('does not exist')) {
+      console.warn('stories_chats table does not exist. Run migration to create it.');
+      return;
+    }
+
+    console.warn('saveStoriesMessage error:', error.message, error.code);
+  } catch (err) {
+    console.warn('saveStoriesMessage exception:', err.message);
   }
 }
 
 async function getStoriesHistory(userId) {
   // Coba dengan audio_url dulu
-  const { data, error } = await supabase
-    .from('stories_chats')
-    .select('role, text, session_id, audio_url, created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
+  try {
+    const { data, error } = await supabase
+      .from('stories_chats')
+      .select('role, text, session_id, audio_url, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
 
-  if (!error) return data ?? [];
+    if (!error) return data ?? [];
 
-  // Fallback tanpa audio_url
-  const { data: d2, error: e2 } = await supabase
-    .from('stories_chats')
-    .select('role, text, session_id, created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
+    // Jika kolom audio_url belum ada
+    if (error.code === '42703') {
+      const { data: d2, error: e2 } = await supabase
+        .from('stories_chats')
+        .select('role, text, session_id, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
 
-  if (e2) {
-    // Tabel belum ada
-    console.warn('stories_chats not available:', e2.message);
+      if (!e2) return (d2 ?? []).map(m => ({ ...m, audio_url: null }));
+      throw e2;
+    }
+
+    throw error;
+  } catch (err) {
+    // Tabel belum ada — log dan return empty
+    console.warn('getStoriesHistory error (returning empty):', err.message);
     return [];
   }
-  return (d2 ?? []).map(m => ({ ...m, audio_url: null }));
 }
 
 async function clearStoriesHistory(userId) {
-  const { error } = await supabase
-    .from('stories_chats')
-    .delete()
-    .eq('user_id', userId);
-  if (error) console.warn('clearStoriesHistory error:', error.message);
+  try {
+    const { error } = await supabase
+      .from('stories_chats')
+      .delete()
+      .eq('user_id', userId);
+    if (error) {
+      // Jika tabel belum ada, anggap sukses (tidak ada yang perlu dihapus)
+      if (error.code === '42P01' || error.message?.toLowerCase().includes('does not exist')) {
+        console.warn('stories_chats table does not exist, nothing to clear.');
+        return;
+      }
+      console.warn('clearStoriesHistory error:', error.message);
+    }
+  } catch (err) {
+    console.warn('clearStoriesHistory exception:', err.message);
+  }
 }
 
 module.exports = {
