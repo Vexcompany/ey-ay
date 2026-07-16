@@ -57,8 +57,16 @@ router.post('/chat', async (req, res) => {
     // Increment usage & simpan ke history
     await db.incrementUsage(String(userId));
     const sid = sessionId || null;
-    await db.saveStoriesMessage(String(userId), { role: 'user',      text: message,                session_id: sid });
-    await db.saveStoriesMessage(String(userId), { role: 'assistant', text: reply, session_id: sid, audio_url: audio?.url || null });
+    await db.saveStoriesMessage(String(userId), { role: 'user',      text: message, session_id: sid });
+    // Simpan marker audio (jangan simpan base64 ke DB karena terlalu besar)
+    await db.saveStoriesMessage(String(userId), {
+      role: 'assistant',
+      text: reply,
+      session_id: sid,
+      audio_url: audio?.url ? 'generated' : null,
+      voice_name: audio?.voice_name || null,
+      voice_model: audio?.model || null
+    });
 
     // Ambil usage terbaru
     const updatedUser = await db.getOrCreateUser(String(userId), tipe);
