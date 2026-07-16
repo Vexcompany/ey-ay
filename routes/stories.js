@@ -50,14 +50,7 @@ router.post('/chat', async (req, res) => {
         audio = await generateTTS(reply);
       } catch (ttsErr) {
         console.error('TTS error (non-fatal):', ttsErr.message);
-      }
-      if (!audio || !audio.url) {
-        audio = {
-          url:        'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg',
-          model:      'nahida',
-          voice_name: 'Ryxa',
-          voice_id:   null
-        };
+        audio = { url: null, error: 'Gagal generate TTS: ' + ttsErr.message };
       }
     }
 
@@ -87,33 +80,46 @@ router.post('/chat', async (req, res) => {
 router.get('/history', async (req, res) => {
   try {
     const raw = await db.getStoriesHistory(String(req.user.userId));
-    if (!raw.length) return res.json({ sessions: [], total_messages: 0 });
 
-    // Group by session_id atau hari (sama seperti chat biasa)
+    if (!raw || !raw.length) {
+      return res.json({ sessions: [], total_messages: 0 });
+    }
+
+    // Deteksi apakah kolom session_id tersedia
+    const hasSessionId = raw.some(m => m.session_id !== undefined && m.session_id !== null);
+
     const sessions = [];
     let cur = null;
+
     for (const msg of raw) {
-      if (msg.role === 'assistant' && isStoryResponse(msg.text) && !msg.audio_url) {
-        msg.audio_url = 'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg';
-      }
-      const sid = msg.session_id || null;
+      // Jangan tambahkan fallback audio_url untuk pesan lama
+      // Biarkan null jika memang tidak ada — frontend yang handle
+
+      const sid = hasSessionId ? (msg.session_id || null) : null;
       const day = new Date(msg.created_at).toDateString();
+
       let same = false;
       if (cur) {
-        if (sid && cur.session_id === sid) same = true;
-        else if (!sid && cur._day === day)  same = true;
+        if (hasSessionId && sid && cur.session_id === sid) {
+          same = true;
+        } else if (hasSessionId && !sid && !cur.session_id) {
+          same = (cur._day === day);
+        } else if (!hasSessionId) {
+          same = (cur._day === day);
+        }
       }
+
       if (same) {
         cur.messages.push(msg);
         cur.last_at = msg.created_at;
-        cur.message_count++;
+        cur.message_count = (cur.message_count || 1) + 1;
       } else {
         cur = {
-          session_id:    sid || `day_${day.replace(/ /g,'_')}`,
+          session_id:    sid || `day_${day.replace(/ /g, '_')}`,
           _day:          day,
           started_at:    msg.created_at,
           last_at:       msg.created_at,
-          title:         msg.role === 'user' ? msg.text?.slice(0,80) : 'Sesi Dongeng',
+          title:         msg.role === 'user' ? (msg.text?.slice(0, 80) || 'Sesi Dongeng') : 'Sesi Dongeng',
           message_count: 1,
           messages:      [msg]
         };
@@ -127,7 +133,7 @@ router.get('/history', async (req, res) => {
     });
   } catch (err) {
     console.error('Stories history error:', err);
-    res.status(500).json({ error: 'Gagal mengambil riwayat.' });
+    res.status(500).json({ error: 'Gagal mengambil riwayat.', detail: err.message });
   }
 });
 
