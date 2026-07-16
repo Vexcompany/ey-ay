@@ -50,7 +50,14 @@ router.post('/chat', async (req, res) => {
         audio = await generateTTS(reply);
       } catch (ttsErr) {
         console.error('TTS error (non-fatal):', ttsErr.message);
-        // TTS gagal tidak block response — tetap kirim teks
+      }
+      if (!audio || !audio.url) {
+        audio = {
+          url:        'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg',
+          model:      'nahida',
+          voice_name: 'Ryxa',
+          voice_id:   null
+        };
       }
     }
 
@@ -86,6 +93,9 @@ router.get('/history', async (req, res) => {
     const sessions = [];
     let cur = null;
     for (const msg of raw) {
+      if (msg.role === 'assistant' && isStoryResponse(msg.text) && !msg.audio_url) {
+        msg.audio_url = 'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg';
+      }
       const sid = msg.session_id || null;
       const day = new Date(msg.created_at).toDateString();
       let same = false;

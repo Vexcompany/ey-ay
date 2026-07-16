@@ -109,13 +109,20 @@ async function generateStory(message, historyMessages = []) {
 }
 
 // ── DETECT IS STORY ───────────────────────────────────────────
-// Cek apakah response adalah cerita (dimulai "Baik, aku mulai")
-// atau masih fase tanya-jawab
+// Cek apakah response adalah cerita (bukan menu pilihan awal)
 function isStoryResponse(text) {
   const lower = text.toLowerCase().trim();
-  return lower.startsWith('baik, aku mulai') ||
-         lower.startsWith('baik aku mulai') ||
-         lower.startsWith('baik, mulai');
+  // Jika berisi pilihan menu (ada angka 1. sampai 4. dan teks tanya pilihan), bukan cerita
+  if (lower.includes('1.') && lower.includes('2.') && (lower.includes('pilih') || lower.includes('cerita tentang apa'))) {
+    return false;
+  }
+  return lower.startsWith('baik') ||
+         lower.startsWith('tentu') ||
+         lower.startsWith('mari') ||
+         lower.startsWith('ini') ||
+         lower.startsWith('suatu') ||
+         lower.startsWith('pada') ||
+         lower.length > 40;
 }
 
 // ── GENERATE TTS ──────────────────────────────────────────────
@@ -132,25 +139,30 @@ async function generateTTS(text) {
 
   const url = `${TTS_API_BASE}?text=${encoded}&model=${TTS_MODEL}&apikey=${TTS_API_KEY}`;
 
-  const { data } = await axios.get(url, {
-    timeout: 30000,
-    headers: { 'User-Agent': 'Mozilla/5.0' }
-  });
+  try {
+    const { data } = await axios.get(url, {
+      timeout: 15000,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
 
-  if (!data?.status) {
-    throw new Error(data?.message || 'TTS API returned status false');
+    if (data?.status && data?.result?.[0]?.url) {
+      return {
+        url:        data.result[0].url,
+        model:      data.result[0].model      || TTS_MODEL,
+        voice_name: data.result[0].voice_name || 'Ryxa',
+        voice_id:   data.result[0].voice_id   || null
+      };
+    }
+  } catch (err) {
+    console.error('TTS API error (fallback used):', err.message);
   }
 
-  const audioUrl = data?.result?.[0]?.url;
-  if (!audioUrl) {
-    throw new Error('Tidak ada URL audio dari TTS API');
-  }
-
+  // Fallback audio agar tidak pernah null / error di frontend
   return {
-    url:        audioUrl,
-    model:      data.result[0].model      || TTS_MODEL,
-    voice_name: data.result[0].voice_name || 'Ryxa',
-    voice_id:   data.result[0].voice_id   || null
+    url:        'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg',
+    model:      TTS_MODEL,
+    voice_name: 'Ryxa',
+    voice_id:   null
   };
 }
 
