@@ -128,41 +128,139 @@ function isStoryResponse(text) {
 // ── GENERATE TTS ──────────────────────────────────────────────
 async function generateTTS(text) {
   // Bersihkan teks: hapus karakter yang tidak perlu untuk TTS
-  const cleanText = text
+  let cleanText = text
     .replace(/\*+/g, '')        // hapus markdown bold/italic
     .replace(/#+\s/g, '')       // hapus heading markdown
     .replace(/\n{3,}/g, '\n\n') // max 2 baris kosong berturut
     .trim();
 
-  // Encode untuk URL
-  const encoded = encodeURIComponent(cleanText);
+  // Batasi panjang teks untuk TTS API (maks ~1000 karakter agar URL tidak terlalu panjang)
+  // Potong di akhir kalimat terdekat
+  const MAX_TTS_CHARS = 1000;
+  if (cleanText.length > MAX_TTS_CHARS) {
+    let truncated = cleanText.substring(0, MAX_TTS_CHARS);
+    const lastPeriod = Math.max(
+      truncated.lastIndexOf('.'),
+      truncated.lastIndexOf('!'),
+      truncated.lastIndexOf('?'),
+      truncated.lastIndexOf('\n')
+    );
+    if (lastPeriod > MAX_TTS_CHARS * 0.6) {
+      truncated = truncated.substring(0, lastPeriod + 1);
+    }
+    cleanText = truncated.trim();
+    console.log(`TTS text truncated from ${text.length} to ${cleanText.length} chars`);
+  }
 
-  const url = `${TTS_API_BASE}?text=${encoded}&model=${TTS_MODEL}&apikey=${TTS_API_KEY}`;
-
+  // Coba primary TTS API (GET)
   try {
+    const encoded = encodeURIComponent(cleanText);
+    const url = `${TTS_API_BASE}?text=${encoded}&model=${TTS_MODEL}&apikey=${TTS_API_KEY}`;
+
     const { data } = await axios.get(url, {
-      timeout: 15000,
+      timeout: 20000,
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
     if (data?.status && data?.result?.[0]?.url) {
+      const audioUrl = data.result[0].url;
+      // Validasi URL audio (harus http/https)
+      if (audioUrl && (audioUrl.startsWith('http://') || audioUrl.startsWith('https://'))) {
+        console.log('TTS generated successfully via primary API');
+        return {
+          url:        audioUrl,
+          model:      data.result[0].model      || TTS_MODEL,
+          voice_name: data.result[0].voice_name || 'Ryxa',
+          voice_id:   data.result[0].voice_id   || null
+        };
+      }
+      console.warn('TTS API returned invalid URL:', audioUrl);
+    } else {
+      console.warn('TTS API returned unexpected format:', JSON.stringify(data).slice(0, 200));
+    }
+  } catch (err) {
+    console.error('Primary TTS API error:', err.message);
+  }
+
+  // Coba secondary TTS API (POST-based, lebih reliable untuk teks panjang)
+  try {
+    const { data } = await axios.post(
+      'https://api.theresav.biz.id/tools/tts',
+      {
+        text: cleanText,
+        model: TTS_MODEL,
+        apikey: TTS_API_KEY
+      },
+      {
+        timeout: 20000,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0'
+        }
+      }
+    );
+
+    if (data?.status && data?.result?.[0]?.url) {
+      const audioUrl = data.result[0].url;
+      if (audioUrl && (audioUrl.startsWith('http://') || audioUrl.startsWith('https://'))) {
+        console.log('TTS generated successfully via POST fallback');
+        return {
+          url:        audioUrl,
+          model:      data.result[0].model      || TTS_MODEL,
+          voice_name: data.result[0].voice_name || 'Ryxa',
+          voice_id:   data.result[0].voice_id   || null
+        };
+      }
+    }
+    if (data?.url) {
+      console.log('TTS generated via POST fallback (direct URL)');
       return {
-        url:        data.result[0].url,
-        model:      data.result[0].model      || TTS_MODEL,
-        voice_name: data.result[0].voice_name || 'Ryxa',
-        voice_id:   data.result[0].voice_id   || null
+        url:        data.url,
+        model:      data.model || TTS_MODEL,
+        voice_name: 'Ryxa',
+        voice_id:   null
       };
     }
   } catch (err) {
-    console.error('TTS API error (fallback used):', err.message);
+    console.error('Secondary TTS API error:', err.message);
   }
 
-  // Fallback audio agar tidak pernah null / error di frontend
+  // Coba alternative TTS API (gTTS-style)
+  try {
+    const encoded = encodeURIComponent(cleanText.substring(0, 500));
+    const altUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=id&q=${encoded}`;
+    
+    const resp = await axios.get(altUrl, {
+      timeout: 15000,
+      responseType: 'arraybuffer',
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+
+    if (resp.status === 200 && resp.data && resp.data.byteLength > 1000) {
+      // Konversi audio ke base64 data URI agar frontend bisa langsung play
+      const base64 = Buffer.from(resp.data).toString('base64');
+      const dataUri = `data:audio/mpeg;base64,${base64}`;
+      console.log('TTS generated via Google TTS fallback');
+      return {
+        url:        dataUri,
+        model:      'google-tts',
+        voice_name: 'Ryxa (Google)',
+        voice_id:   null
+      };
+    }
+  } catch (err) {
+    console.error('Google TTS fallback error:', err.message);
+  }
+
+  // Last resort: fallback audio berupa silent/notification sound yang valid
+  // Gunakan data URI untuk audio pendek agar tidak bergantung external URL
+  console.warn('All TTS APIs failed, using silent fallback');
   return {
-    url:        'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg',
+    url:        null,  // null agar frontend tahu tidak ada audio yang bisa diputar
     model:      TTS_MODEL,
     voice_name: 'Ryxa',
-    voice_id:   null
+    voice_id:   null,
+    error:      'TTS tidak tersedia saat ini. Coba lagi nanti.'
   };
 }
 
