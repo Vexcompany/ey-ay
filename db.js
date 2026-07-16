@@ -228,7 +228,7 @@ async function getActiveAnnouncements() {
 
 // ── STORIES (RYXA) ─────────────────────────────────────────────
 
-async function saveStoriesMessage(userId, { role, text, session_id, audio_url }) {
+async function saveStoriesMessage(userId, { role, text, session_id, audio_url, voice_name, voice_model }) {
   const payload = {
     user_id:    userId,
     role,
