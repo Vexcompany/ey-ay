@@ -36,6 +36,10 @@ Aturan penggunaan:
 3. Letakkan tag di akhir respons, setelah teks biasa
 4. Boleh kombinasikan dengan kalimat seperti "Eh, mau aku kirimin lagu yang cocok?"
 5. JANGAN tulis tag jika user sedang tanya hal teknis/pelajaran/koding
+
+Contoh penggunaan yang benar:
+"Wah, lagi stres ya? Aku dengerin kamu kok. Coba tarik napas dulu. [SEND_SONG:mood=healing]"
+"Semangat latihan hari ini! Biar makin berapi-api nih. [SEND_SONG:mood=semangat]"
 `;
 
 function buildSystemPrompt(persona) {
@@ -67,6 +71,7 @@ ATURAN KETAT:
 ${MUSIC_INSTRUCTION}`;
   }
 
+  // Default Persona: Kak Taksaka
   return `Kamu adalah Kak Taksaka, asisten AI santai dan friendly milik ${PAGASKA_DATA.namaLengkap}.
 
 IDENTITAS:
@@ -96,8 +101,10 @@ const openai = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY
 });
 
-async function callGemini(message, _systemPrompt, personaKey = 'taksaka', historyMessages = []) {
-  const systemPrompt = buildSystemPrompt(personaKey);
+async function callGemini(message, customSystemPrompt, personaKey = 'taksaka', historyMessages = []) {
+  const systemPrompt = customSystemPrompt && customSystemPrompt.trim() !== ''
+    ? customSystemPrompt
+    : buildSystemPrompt(personaKey);
 
   const recentHistory = historyMessages.slice(-10).map(msg => ({
     role: msg.role === 'assistant' ? 'assistant' : 'user',
@@ -110,18 +117,22 @@ async function callGemini(message, _systemPrompt, personaKey = 'taksaka', histor
     { role: 'user', content: message }
   ];
 
-  const completion = await openai.chat.completions.create({
-    model: "nvidia/nemotron-3-ultra-550b-a55b",
-    messages: messages,
-    temperature: 1,
-    top_p: 0.95,
-    max_tokens: 16384,
-    extra_body: {
-      chat_template_kwargs: { enable_thinking: true },
-      reasoning_budget: 16384
+  const completion = await openai.chat.completions.create(
+    {
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      messages: messages,
+      temperature: 1,
+      top_p: 0.95,
+      max_tokens: 16384,
+      stream: true
     },
-    stream: true
-  });
+    {
+      body: {
+        chat_template_kwargs: { enable_thinking: true },
+        reasoning_budget: 16384
+      }
+    }
+  );
 
   let fullContent = "";
 
@@ -130,7 +141,7 @@ async function callGemini(message, _systemPrompt, personaKey = 'taksaka', histor
     
     const delta = chunk.choices[0].delta;
 
-    if (delta.content) {
+    if (delta && delta.content) {
       fullContent += delta.content;
     }
   }
