@@ -125,7 +125,7 @@ async function callGemini(message, customSystemPrompt, personaKey = 'taksaka', h
 
   // Request ke NVIDIA API dalam 1 payload utuh
   const completion = await openai.chat.completions.create({
-    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    model: "mistralai/mistral-medium-3.5-128b",
     messages: messages,
     temperature: 1,
     top_p: 0.95,
