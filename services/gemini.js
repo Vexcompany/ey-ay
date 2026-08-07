@@ -17,7 +17,6 @@ function getDateTime() {
   return { jam, tgl };
 }
 
-// Instruksi Pagaska Music
 const MUSIC_INSTRUCTION = `
 PAGASKA MUSIC — FITUR KHUSUS:
 Pagaska punya platform musik bernama "Pagaska Music". Kamu bisa merekomendasikan lagu berdasarkan suasana hati (mood) user dengan menyelipkan tag khusus:
@@ -68,7 +67,6 @@ ATURAN KETAT:
 ${MUSIC_INSTRUCTION}`;
   }
 
-  // Default Persona: Kak Taksaka
   return `Kamu adalah Kak Taksaka, asisten AI santai dan friendly milik ${PAGASKA_DATA.namaLengkap}.
 
 IDENTITAS:
@@ -95,7 +93,7 @@ ${MUSIC_INSTRUCTION}`;
 
 const openai = new OpenAI({
   baseURL: "https://integrate.api.nvidia.com/v1",
-  apiKey: process.env.NVIDIA_API_KEY
+  apiKey: process.process?.env?.NVIDIA_API_KEY || process.env.NVIDIA_API_KEY
 });
 
 async function callGemini(message, customSystemPrompt, personaKey = 'taksaka', historyMessages = []) {
@@ -114,16 +112,15 @@ async function callGemini(message, customSystemPrompt, personaKey = 'taksaka', h
     { role: 'user', content: message }
   ];
 
-  // Helper fungsi Retry jika server NVIDIA mengalami kendala sementara
   const fetchWithRetry = async (retries = 2, delay = 1000) => {
     try {
       return await openai.chat.completions.create({
-        // Menggunakan nama model Mistral resmi yang tersedia di NVIDIA NIM
-        model: "mistralai/mistral-large-2-instruct",
+        // Menggunakan Meta Llama 3.1 8B (Model sepi, super stabil, & cepat)
+        model: "meta/llama-3.1-8b-instruct",
         messages: messages,
         temperature: 0.7,
         top_p: 0.95,
-        max_tokens: 4096,
+        max_tokens: 2048,
         stream: true
       });
     } catch (err) {
