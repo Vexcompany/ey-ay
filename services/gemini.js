@@ -109,10 +109,10 @@ async function callGemini(message, _systemPrompt, personaKey = 'taksaka', histor
     {
       model: {
         id: 'gpt-3.5-turbo',
-        name: 'gpt-3.5-turbo',
-        maxLength: 32000,
-        tokenLimit: 8000,
-        completionTokenLimit: 5000,
+        name: 'GPT-3.5',
+        maxLength: 12000,
+        tokenLimit: 4000,
+        completionTokenLimit: 4000,
         deploymentName: 'gpt-3.5-turbo'
       },
       messages,
