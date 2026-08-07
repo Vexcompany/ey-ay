@@ -17,7 +17,7 @@ function getDateTime() {
   return { jam, tgl };
 }
 
-// Instruksi Pagaska Music — disisipkan ke setiap persona
+// Instruksi Pagaska Music
 const MUSIC_INSTRUCTION = `
 PAGASKA MUSIC — FITUR KHUSUS:
 Pagaska punya platform musik bernama "Pagaska Music". Kamu bisa merekomendasikan lagu berdasarkan suasana hati (mood) user dengan menyelipkan tag khusus:
@@ -37,10 +37,6 @@ Aturan penggunaan:
 3. Letakkan tag di akhir respons, setelah teks biasa
 4. Boleh kombinasikan dengan kalimat seperti "Eh, mau aku kirimin lagu yang cocok?"
 5. JANGAN tulis tag jika user sedang tanya hal teknis/pelajaran/koding
-
-Contoh penggunaan yang benar:
-"Wah, lagi stres ya? Aku dengerin kamu kok. Coba tarik napas dulu. [SEND_SONG:mood=healing]"
-"Semangat latihan hari ini! Biar makin berapi-api nih. [SEND_SONG:mood=semangat]"
 `;
 
 function buildSystemPrompt(persona) {
@@ -97,50 +93,52 @@ ATURAN:
 ${MUSIC_INSTRUCTION}`;
 }
 
-// Inisialisasi Client OpenAI mengarah ke NVIDIA Endpoint
-// Mengambil API Key dari Environment Variable Vercel: process.env.NVIDIA_API_KEY
 const openai = new OpenAI({
   baseURL: "https://integrate.api.nvidia.com/v1",
   apiKey: process.env.NVIDIA_API_KEY
 });
 
 async function callGemini(message, customSystemPrompt, personaKey = 'taksaka', historyMessages = []) {
-  // Gunakan customSystemPrompt jika di-pass, jika tidak gunakan generator persona
   const systemPrompt = customSystemPrompt && customSystemPrompt.trim() !== ''
     ? customSystemPrompt
     : buildSystemPrompt(personaKey);
 
-  // Format dan batasi riwayat obrolan (10 pesan terakhir)
   const recentHistory = historyMessages.slice(-10).map(msg => ({
     role: msg.role === 'assistant' ? 'assistant' : 'user',
     content: msg.content
   }));
 
-  // Susun pesan
   const messages = [
     { role: 'system', content: systemPrompt },
     ...recentHistory,
     { role: 'user', content: message }
   ];
 
-  // Request ke NVIDIA API dalam 1 payload utuh
-  const completion = await openai.chat.completions.create({
-    model: "mistralai/mistral-medium-3.5-128b",
-    messages: messages,
-    temperature: 1,
-    top_p: 0.95,
-    max_tokens: 16384,
-    stream: true,
-    // Field khusus NVIDIA disisipkan langsung di dalam objek request
-    // @ts-ignore
-    chat_template_kwargs: { enable_thinking: true },
-    // @ts-ignore
-    reasoning_budget: 16384
-  });
+  // Helper fungsi Retry jika server NVIDIA mengalami kendala sementara
+  const fetchWithRetry = async (retries = 2, delay = 1000) => {
+    try {
+      return await openai.chat.completions.create({
+        // Menggunakan nama model Mistral resmi yang tersedia di NVIDIA NIM
+        model: "mistralai/mistral-large-2-instruct",
+        messages: messages,
+        temperature: 0.7,
+        top_p: 0.95,
+        max_tokens: 4096,
+        stream: true
+      });
+    } catch (err) {
+      if (retries > 0 && (err.status === 429 || err.status === 500)) {
+        await new Promise(res => setTimeout(res, delay));
+        return fetchWithRetry(retries - 1, delay * 2);
+      }
+      throw err;
+    }
+  };
+
+  const completion = await fetchWithRetry();
 
   let fullContent = "";
 
-  // Membaca data stream
   for await (const chunk of completion) {
     if (!chunk.choices || chunk.choices.length === 0) continue;
     
