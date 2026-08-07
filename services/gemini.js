@@ -1,4 +1,4 @@
-const axios = require('axios');
+const OpenAI = require('openai');
 
 const PAGASKA_DATA = {
   namaLengkap: "Paskibra Gala Taksaka SMKN 5 Kota Madiun",
@@ -17,7 +17,6 @@ function getDateTime() {
   return { jam, tgl };
 }
 
-// Instruksi Pagaska Music — disisipkan ke setiap persona
 const MUSIC_INSTRUCTION = `
 PAGASKA MUSIC — FITUR KHUSUS:
 Pagaska punya platform musik bernama "Pagaska Music". Kamu bisa merekomendasikan lagu berdasarkan suasana hati (mood) user dengan menyelipkan tag khusus:
@@ -37,10 +36,6 @@ Aturan penggunaan:
 3. Letakkan tag di akhir respons, setelah teks biasa
 4. Boleh kombinasikan dengan kalimat seperti "Eh, mau aku kirimin lagu yang cocok?"
 5. JANGAN tulis tag jika user sedang tanya hal teknis/pelajaran/koding
-
-Contoh penggunaan yang benar:
-"Wah, lagi stres ya? Aku dengerin kamu kok. Coba tarik napas dulu. [SEND_SONG:mood=healing]"
-"Semangat latihan hari ini! Biar makin berapi-api nih. [SEND_SONG:mood=semangat]"
 `;
 
 function buildSystemPrompt(persona) {
@@ -96,45 +91,51 @@ ATURAN:
 ${MUSIC_INSTRUCTION}`;
 }
 
+const openai = new OpenAI({
+  baseURL: "https://integrate.api.nvidia.com/v1",
+  apiKey: process.env.NVIDIA_API_KEY
+});
+
 async function callGemini(message, _systemPrompt, personaKey = 'taksaka', historyMessages = []) {
   const systemPrompt = buildSystemPrompt(personaKey);
 
+  const recentHistory = historyMessages.slice(-10).map(msg => ({
+    role: msg.role === 'assistant' ? 'assistant' : 'user',
+    content: msg.content
+  }));
+
   const messages = [
-    ...historyMessages,
+    { role: 'system', content: systemPrompt },
+    ...recentHistory,
     { role: 'user', content: message }
   ];
 
-  const { data } = await axios.post(
-    'https://chateverywhere.app/api/chat/',
-    {
-      model: {
-        id: 'gpt-3.5-turbo',
-        name: 'GPT-3.5',
-        maxLength: 12000,
-        tokenLimit: 4000,
-        completionTokenLimit: 4000,
-        deploymentName: 'gpt-3.5-turbo'
-      },
-      messages,
-      prompt: systemPrompt,
-      temperature: 0.7
+  const completion = await openai.chat.completions.create({
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    messages: messages,
+    temperature: 1,
+    top_p: 0.95,
+    max_tokens: 16384,
+    extra_body: {
+      chat_template_kwargs: { enable_thinking: true },
+      reasoning_budget: 16384
     },
-    {
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
-      },
-      timeout: 30000
+    stream: true
+  });
+
+  let fullContent = "";
+
+  for await (const chunk of completion) {
+    if (!chunk.choices || chunk.choices.length === 0) continue;
+    
+    const delta = chunk.choices[0].delta;
+
+    if (delta.content) {
+      fullContent += delta.content;
     }
-  );
+  }
 
-  if (typeof data === 'string' && data.trim()) return data.trim();
-  if (data?.choices?.[0]?.message?.content) return data.choices[0].message.content.trim();
-  if (data?.content) return String(data.content).trim();
-  if (data?.text) return String(data.text).trim();
-
-  throw new Error('Format response tidak dikenali: ' + JSON.stringify(data).slice(0, 200));
+  return fullContent.trim();
 }
 
 module.exports = { callGemini };
