@@ -108,12 +108,12 @@ async function callGemini(message, _systemPrompt, personaKey = 'taksaka', histor
     'https://chateverywhere.app/api/chat/',
     {
       model: {
-        id: 'gpt-4',
-        name: 'GPT-4',
+        id: 'gpt-3.5-turbo',
+        name: 'gpt-3.5-turbo',
         maxLength: 32000,
         tokenLimit: 8000,
         completionTokenLimit: 5000,
-        deploymentName: 'gpt-4'
+        deploymentName: 'gpt-3.5-turbo'
       },
       messages,
       prompt: systemPrompt,
