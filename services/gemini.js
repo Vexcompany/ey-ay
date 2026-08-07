@@ -17,6 +17,7 @@ function getDateTime() {
   return { jam, tgl };
 }
 
+// Instruksi Pagaska Music — disisipkan ke setiap persona
 const MUSIC_INSTRUCTION = `
 PAGASKA MUSIC — FITUR KHUSUS:
 Pagaska punya platform musik bernama "Pagaska Music". Kamu bisa merekomendasikan lagu berdasarkan suasana hati (mood) user dengan menyelipkan tag khusus:
@@ -96,46 +97,50 @@ ATURAN:
 ${MUSIC_INSTRUCTION}`;
 }
 
+// Inisialisasi Client OpenAI mengarah ke NVIDIA Endpoint
+// Mengambil API Key dari Environment Variable Vercel: process.env.NVIDIA_API_KEY
 const openai = new OpenAI({
   baseURL: "https://integrate.api.nvidia.com/v1",
   apiKey: process.env.NVIDIA_API_KEY
 });
 
 async function callGemini(message, customSystemPrompt, personaKey = 'taksaka', historyMessages = []) {
+  // Gunakan customSystemPrompt jika di-pass, jika tidak gunakan generator persona
   const systemPrompt = customSystemPrompt && customSystemPrompt.trim() !== ''
     ? customSystemPrompt
     : buildSystemPrompt(personaKey);
 
+  // Format dan batasi riwayat obrolan (10 pesan terakhir)
   const recentHistory = historyMessages.slice(-10).map(msg => ({
     role: msg.role === 'assistant' ? 'assistant' : 'user',
     content: msg.content
   }));
 
+  // Susun pesan
   const messages = [
     { role: 'system', content: systemPrompt },
     ...recentHistory,
     { role: 'user', content: message }
   ];
 
-  const completion = await openai.chat.completions.create(
-    {
-      model: "nvidia/nemotron-3-ultra-550b-a55b",
-      messages: messages,
-      temperature: 1,
-      top_p: 0.95,
-      max_tokens: 16384,
-      stream: true
-    },
-    {
-      body: {
-        chat_template_kwargs: { enable_thinking: true },
-        reasoning_budget: 16384
-      }
-    }
-  );
+  // Request ke NVIDIA API dalam 1 payload utuh
+  const completion = await openai.chat.completions.create({
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    messages: messages,
+    temperature: 1,
+    top_p: 0.95,
+    max_tokens: 16384,
+    stream: true,
+    // Field khusus NVIDIA disisipkan langsung di dalam objek request
+    // @ts-ignore
+    chat_template_kwargs: { enable_thinking: true },
+    // @ts-ignore
+    reasoning_budget: 16384
+  });
 
   let fullContent = "";
 
+  // Membaca data stream
   for await (const chunk of completion) {
     if (!chunk.choices || chunk.choices.length === 0) continue;
     
